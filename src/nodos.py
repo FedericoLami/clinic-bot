@@ -59,3 +59,110 @@ def nodo_buscador(estado):
     elif categoria in ["fuera_de_alcance", "spam", "derivar_secretario"]:
         estado["informacion"] = ""
     return estado
+
+
+
+def nodo_redactor(estado):
+
+    if estado["categoria"].strip() == "spam":
+        estado["respuesta"] = "Tu mensaje no corresponde a una consulta válida. Si necesitás ayuda, escribinos con tu consulta."
+        return estado
+
+    if estado["categoria"].strip() == "fuera_de_alcance":
+        estado["respuesta"] = "Este canal es exclusivamente para turnos y consultas administrativas. Para imágenes de estudios, enviáselas directamente a la médica al [CONTACTO_MEDICA]."
+        return estado
+
+    mensajes = [{"role" : "user", "content" : f"Categoría: {estado['categoria']}\nMensaje del paciente: {estado['mensaje']}\nInformación disponible: {estado['informacion']}"}]
+
+    answer = client.messages.create(
+            model = "claude-haiku-4-5",
+            max_tokens = 1024,
+            system = """
+                    Sos un asistente de atención al paciente de una clínica de gastroenterología. 
+                    Tu tarea es redactar respuestas claras, empáticas y profesionales basándote en la categoría 
+                    detectada y la información disponible.
+
+                    Reglas generales:
+                    - Respondé siempre en el mismo idioma que el paciente (español, inglés o portugués)
+                    - Sé conciso y directo, sin frases de relleno
+                    - Nunca des consejos médicos bajo ningún contexto
+                    - Nunca inventes información que no esté en los datos provistos
+
+                    Instrucciones por categoría:
+
+                    agendar_turno: 
+                    Informá al paciente el próximo turno disponible con fecha y hora. 
+                    Pedile que confirme con su nombre completo y DNI para registrar el turno.
+
+                    consultar_turno: 
+                    Mostrá los datos del turno del paciente (fecha, hora, código de turno).
+                    Si no tiene turno, informáselo amablemente y ofrecele agendar uno.
+
+                    cancelar_turno: 
+                    Mostrá el turno actual y pedile el código de turno para confirmar la cancelación.
+                    Si no tiene turno, informáselo. Si no tiene el código, derivalo al secretario.
+
+                    pregunta_frecuente: 
+                    Respondé usando la información disponible de la clínica.
+                    Si la pregunta no está en los datos, derivalo al secretario.
+
+                    derivar_secretario: 
+                    Informá al paciente que va a ser atendido por una persona en breve.
+                    Sé empático y tranquilizador.
+
+                    fuera_de_alcance: 
+                    Explicá amablemente que este canal es exclusivamente para turnos y consultas administrativas.
+                    Si el paciente envió imágenes de estudios, indicale que se las envíe directamente a la médica 
+                    al siguiente contacto: [CONTACTO_MEDICA].
+                    Nunca des consejos médicos ni interpretés estudios.
+
+                    spam: 
+                    Respondé brevemente que el mensaje no corresponde a una consulta válida.
+                 """,
+            messages = mensajes
+        )
+    
+    estado["respuesta"] = answer.content[0].text
+    return estado
+
+
+def nodo_secretario(estado):
+    enviar_alerta_secretario(f"Paciente requiere atención: {estado['telefono']} - Consulta: {estado['mensaje']}")
+    return estado
+
+def nodo_revisor(estado):
+    
+        if estado["categoria"].strip() == "spam":
+            estado["respuesta_final"] = estado["respuesta"]
+            return estado
+
+        if estado["categoria"].strip() == "fuera_de_alcance":
+            estado["respuesta"] = "Este canal es exclusivamente para turnos y consultas administrativas. Para imágenes de estudios, enviáselas directamente a la médica al [CONTACTO_MEDICA]."
+            return estado
+        
+        mensajes = [{"role" : "user", "content" : f"Mensaje original del cliente: {estado['mensaje']}\nRespuesta a revisar: {estado['respuesta']}"}]
+    
+        answer = client.messages.create(
+            model = "claude-haiku-4-5",
+            max_tokens = 1024,
+            system = """
+                    Sos un revisor de calidad de respuestas de una clínica de gastroenterología.
+                    Recibís la consulta del paciente y la respuesta redactada por otro agente.
+                    Tu tarea es verificar que la respuesta sea:
+                    - Empática y profesional
+                    - Correcta según la consulta del paciente
+                    - Sin información inventada
+                    - Sin consejos médicos de ningún tipo
+                    - Sin preguntas de seguimiento al final
+                    - En el mismo idioma que el paciente
+
+                    Si la respuesta está bien, devolvela tal cual.
+                    Si necesita mejoras, corregila y devolvé la versión mejorada.
+                    Respondé únicamente con la respuesta final al paciente, sin explicaciones adicionales.
+                 """,
+            messages = mensajes
+        )
+        estado["respuesta_final"] = answer.content[0].text
+        save_history(estado["telefono"],estado["historial"])
+        return estado
+    
