@@ -5,6 +5,7 @@ class EstadoSesion(TypedDict):
     telefono:str
     categoria:str
     informacion:str
+    dni:str
     respuesta:str
     historial: List[dict]
     requiere_secretario: bool
