@@ -48,7 +48,7 @@ def obtener_preguntas_frecuentes():
     return resultados
 
 def obtener_turnos_proximos_24hs():
-    pgCursor.execute("SELECT * FROM turnos WHERE estado = 'agendado' AND recordatorio_enviado = false AND (fecha + hora) BETWEEN NOW() AND NOW() + INTERVAL '24 hours'")
+    pgCursor.execute("SELECT *, pacientes.telefono FROM turnos JOIN pacientes ON turnos.dni_paciente = pacientes.dni WHERE estado = 'agendado' AND recordatorio_enviado = false AND (fecha + hora) BETWEEN NOW() AND NOW() + INTERVAL '24 hours'")
     resultados = pgCursor.fetchall()
     return resultados
 
