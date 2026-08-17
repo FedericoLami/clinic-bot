@@ -2,9 +2,17 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from src.agente import grafo_app
 from fastapi.responses import HTMLResponse
+from src.recordatorios import scheduler
 from src.twilio_client import procesar_webhook, enviar_mensaje
+from contextlib import asynccontextmanager
 
-app = FastAPI()
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    scheduler.start()
+    yield
+    scheduler.shutdown()
+
+app = FastAPI(lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
