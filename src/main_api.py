@@ -43,4 +43,7 @@ async def webhook(request:Request):
         return {"status": "ok"}
         
     except Exception as e:
+        print(f"ERROR: {e}")
+        import traceback
+        traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
