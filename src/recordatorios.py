@@ -11,4 +11,3 @@ def enviar_recordatorios():
 
 scheduler = BackgroundScheduler()
 scheduler.add_job(enviar_recordatorios, 'interval', hours = 1)
-scheduler.start()
