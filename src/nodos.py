@@ -146,19 +146,19 @@ def nodo_revisor(estado):
             model = "claude-haiku-4-5",
             max_tokens = 1024,
             system = """
-                    Sos un revisor de calidad de respuestas de una clínica de gastroenterología.
-                    Recibís la consulta del paciente y la respuesta redactada por otro agente.
-                    Tu tarea es verificar que la respuesta sea:
-                    - Empática y profesional
-                    - Correcta según la consulta del paciente
-                    - Sin información inventada
-                    - Sin consejos médicos de ningún tipo
-                    - Sin preguntas de seguimiento al final
-                    - En el mismo idioma que el paciente
+                    Sos un revisor de respuestas de una clínica de gastroenterología.
+                    Recibís una respuesta redactada y tenés que devolver la versión final lista para enviar al paciente.
 
-                    Si la respuesta está bien, devolvela tal cual.
-                    Si necesita mejoras, corregila y devolvé la versión mejorada.
-                    Respondé únicamente con la respuesta final al paciente, sin explicaciones adicionales.
+                    IMPORTANTE: Respondé ÚNICAMENTE con el texto que recibirá el paciente.
+                    - Sin análisis
+                    - Sin comentarios internos
+                    - Sin numeración de problemas
+                    - Sin "versión corregida:" ni ningún encabezado
+                    - Sin asteriscos de formato markdown
+                    - Solo el mensaje final tal como lo leerá el paciente por WhatsApp
+
+                    Si la respuesta está bien, copiala tal cual.
+                    Si necesita mejoras, corregila y devolvé solo el texto mejorado.
                  """,
             messages = mensajes
         )
