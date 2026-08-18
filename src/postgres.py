@@ -26,13 +26,18 @@ def obtener_turnos_disponibles(fecha):
     resultados = pgCursor.fetchall()
     return resultados
 
-def agendar_turno(telefono,nombre,dni,fecha,hora):
+def agendar_turno(telefono, nombre, dni, fecha, hora):
     codigo = "TUR-" + "".join(random.choices(string.ascii_uppercase + string.digits, k=4))
-    pgCursor.execute("INSERT INTO pacientes(telefono,nombre,dni) VALUES (%s,%s,%s) ON CONFLICT (dni) DO NOTHING", (telefono,nombre,dni))
-    pgCursor.execute("INSERT INTO turnos(codigo_turno,telefono_paciente,fecha,hora,estado) VALUES (%s,%s,%s,%s,%s) ON CONFLICT (codigo_turno) DO NOTHING", (codigo,telefono,fecha,hora,"agendado"))
+    pgCursor.execute(
+        "INSERT INTO pacientes(telefono, nombre, dni) VALUES (%s,%s,%s) ON CONFLICT (dni) DO NOTHING",
+        (telefono, nombre, dni)
+    )
+    pgCursor.execute(
+        "INSERT INTO turnos(codigo_turno, dni_paciente, fecha, hora, estado) VALUES (%s,%s,%s,%s,%s)",
+        (codigo, dni, fecha, hora, "agendado")
+    )
     pgConnection.commit()
     return codigo
-
 def obtener_turno_paciente(dni_paciente):
     pgCursor.execute("SELECT * FROM turnos WHERE estado = 'agendado' AND dni_paciente = %s",(dni_paciente,))
     resultados = pgCursor.fetchall()

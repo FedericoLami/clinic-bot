@@ -39,3 +39,12 @@ def read_medical_appointment(telefono):
         return turno
     else:
         return None
+
+def guardar_datos_turno(telefono, datos):
+    redisClient.set("datos_turno:" + telefono, json.dumps(datos), ex=1800)
+
+def leer_datos_turno(telefono):
+    datos = redisClient.get("datos_turno:" + telefono)
+    if datos:
+        return json.loads(datos)
+    return {}
