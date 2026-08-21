@@ -1,6 +1,7 @@
 import anthropic
 from dotenv import load_dotenv
 import os
+import re
 from src.postgres import obtener_proximo_turno_disponible, obtener_turnos_disponibles, agendar_turno, obtener_turno_paciente, cancelar_turno, obtener_preguntas_frecuentes
 from src.sesion import save_history, read_history, guardar_datos_turno, leer_datos_turno
 from src.twilio_client import enviar_alerta_secretario
@@ -190,7 +191,11 @@ def nodo_redactor(estado):
             return estado
 
         elif paso == "confirmando":
-            if "si" in estado["mensaje"].lower() or "sí" in estado["mensaje"].lower():
+            mensaje_lower = estado["mensaje"].lower()
+            confirma = re.search(r"\bs[ií]\b", mensaje_lower) is not None
+            rechaza = re.search(r"\bno\b", mensaje_lower) is not None
+
+            if confirma and not rechaza:
                 try:
                     codigo = agendar_turno(
                         estado["telefono"],
@@ -206,10 +211,13 @@ def nodo_redactor(estado):
                     print(f"ERROR AGENDAR: {e}")
                     guardar_datos_turno(estado["telefono"], {})
                     estado["respuesta"] = "Hubo un error al registrar el turno. Por favor comuníquese con la secretaría."
-            else:
+            elif rechaza and not confirma:
                 guardar_datos_turno(estado["telefono"], {})
                 estado["paso_flujo"] = ""
                 estado["respuesta"] = "Cancelamos el proceso. Si desea agendar un turno nuevamente, escríbanos."
+            else:
+                # Respuesta ambigua (ni SI ni NO claros, o ambas): no asumimos, volvemos a preguntar
+                estado["respuesta"] = "No entendí su respuesta. Por favor confirme el turno respondiendo SI o NO."
             return estado
 
     # ── FLUJO: CONSULTAR TURNO ────────────────────────────────────────────────
