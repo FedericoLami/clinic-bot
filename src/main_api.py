@@ -5,7 +5,7 @@ from fastapi.responses import HTMLResponse
 from src.recordatorios import scheduler
 from src.twilio_client import procesar_webhook, enviar_mensaje
 from contextlib import asynccontextmanager
-from src.sesion import leer_datos_turno, guardar_datos_turno
+from src.sesion import leer_datos_turno
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -28,13 +28,8 @@ async def webhook(request:Request):
         datos = await request.form()
         mensaje, telefono = procesar_webhook(datos)
         
-        # Si el mensaje es nuevo pedido de turno, resetear el flujo
-        if "turno" in mensaje.lower() and "quiero" in mensaje.lower():
-            guardar_datos_turno(telefono, {})
-            paso_flujo = ""
-        else:
-            datos_turno = leer_datos_turno(telefono)
-            paso_flujo = datos_turno.get("paso", "")
+        datos_turno = leer_datos_turno(telefono)
+        paso_flujo = datos_turno.get("paso", "")
 
         resultado = grafo_app.invoke({
             "mensaje": mensaje,
