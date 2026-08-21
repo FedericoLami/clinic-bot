@@ -1,28 +1,39 @@
 import anthropic
 from dotenv import load_dotenv
 import os
-from src.postgres import obtener_proximo_turno_disponible,obtener_turnos_disponibles, agendar_turno, obtener_turno_paciente, cancelar_turno, obtener_preguntas_frecuentes
-from src.sesion import save_history, read_history
-from src.twilio_client import enviar_alerta_secretario
+from src.postgres import obtener_proximo_turno_disponible, obtener_turnos_disponibles, agendar_turno, obtener_turno_paciente, cancelar_turno, obtener_preguntas_frecuentes
 from src.sesion import save_history, read_history, guardar_datos_turno, leer_datos_turno
+from src.twilio_client import enviar_alerta_secretario
 
 load_dotenv()
 
 client = anthropic.Anthropic()
 
+CATEGORIAS_CON_FLUJO = [
+    "agendar_turno", "agendar_turno_esperando_datos", "agendar_turno_confirmando",
+    "consultar_turno", "consultar_turno_esperando_dni",
+    "cancelar_turno", "cancelar_turno_esperando_codigo",
+    "spam", "fuera_de_alcance"
+]
+
 def nodo_clasificador(estado):
     estado["historial"] = read_history(estado["telefono"])
     estado["historial"].append({"role": "user", "content": estado["mensaje"]})
-    
+
     # Leer flujo activo de Redis
     datos_turno = leer_datos_turno(estado["telefono"])
     paso = datos_turno.get("paso", "")
-    
+
     if paso in ["esperando_datos", "confirmando"]:
         estado["categoria"] = f"agendar_turno_{paso}"
         estado["paso_flujo"] = paso
         return estado
-    
+
+    if paso in ["consultar_turno_esperando_dni", "cancelar_turno_esperando_codigo"]:
+        estado["categoria"] = paso
+        estado["paso_flujo"] = paso
+        return estado
+
     # Clasificar normalmente con Claude
     mensajes = estado["historial"]
     answer = client.messages.create(
@@ -37,6 +48,7 @@ def nodo_clasificador(estado):
                 - consultar_turno: el paciente pregunta si tiene turno, cuándo es o quiere ver los datos de su turno
                 - cancelar_turno: el paciente quiere cancelar o anular su turno
                 - pregunta_frecuente: preguntas sobre obras sociales, horarios, dirección, documentación, preparación para estudios o aranceles
+                - saludo: saludos, agradecimientos, despedidas o mensajes sociales sin consulta específica (hola, gracias, buenas, chau, ok, perfecto)
                 - derivar_secretario: el paciente necesita hablar con una persona o el mensaje no encaja en ninguna categoría válida
                 - fuera_de_alcance: el paciente menciona síntomas, dolores, urgencias médicas, envía imágenes o hace consultas médicas de cualquier tipo
                 - spam: mensajes sin sentido, texto aleatorio o publicidad
@@ -45,7 +57,7 @@ def nodo_clasificador(estado):
                 - Este canal es EXCLUSIVAMENTE para turnos y consultas administrativas de la clínica. NUNCA para consultas médicas.
                 - Si el paciente menciona síntomas, dolores, urgencias o cualquier consulta médica: clasificar como fuera_de_alcance
                 - Si el paciente envía imágenes o archivos: clasificar como fuera_de_alcance
-                - Si el mensaje es un "sí" o "no" suelto sin contexto claro: clasificar como derivar_secretario
+                - Saludos, agradecimientos y despedidas: clasificar como saludo
                 - En caso de duda entre categorías: preferir derivar_secretario
                 - Aceptás mensajes en español, inglés y portugués
 
@@ -53,39 +65,51 @@ def nodo_clasificador(estado):
              """,
         messages=mensajes
     )
-    
-    estado["categoria"] = answer.content[0].text
+
+    estado["categoria"] = answer.content[0].text.strip()
     return estado
+
 
 def nodo_buscador(estado):
     categoria = estado["categoria"]
     if categoria == "agendar_turno":
         estado["informacion"] = str(obtener_proximo_turno_disponible())
-    elif categoria == "consultar_turno":
-        estado["informacion"] = str(obtener_turno_paciente(estado["dni"]))
-    elif categoria == "cancelar_turno":
-        estado["informacion"] = str(obtener_turno_paciente(estado["dni"]))
     elif categoria == "pregunta_frecuente":
         estado["informacion"] = str(obtener_preguntas_frecuentes())
-    elif categoria in ["fuera_de_alcance", "spam", "derivar_secretario"]:
-        estado["informacion"] = ""
-    elif categoria in ["agendar_turno_esperando_datos", "agendar_turno_confirmando"]:
+    else:
         estado["informacion"] = ""
     return estado
 
 
-
 def nodo_redactor(estado):
+    categoria = estado["categoria"].strip()
 
-    if estado["categoria"].strip() == "spam":
+    # ── SPAM ──────────────────────────────────────────────────────────────────
+    if categoria == "spam":
         estado["respuesta"] = "Este número es para turnos y consultas de la clínica. Si necesitás ayuda, escribí tu consulta."
         return estado
 
-    if estado["categoria"].strip() == "fuera_de_alcance":
+    # ── FUERA DE ALCANCE ──────────────────────────────────────────────────────
+    if categoria == "fuera_de_alcance":
         estado["respuesta"] = "Este canal es exclusivamente para turnos y consultas administrativas. Para imágenes de estudios, enviáselas directamente a la médica."
         return estado
 
-    if estado["categoria"].strip() in ["agendar_turno", "agendar_turno_esperando_datos", "agendar_turno_confirmando"]:
+    # ── SALUDO / AGRADECIMIENTO ───────────────────────────────────────────────
+    if categoria == "saludo":
+        mensajes = [{"role": "user", "content": estado["mensaje"]}]
+        answer = client.messages.create(
+            model="claude-haiku-4-5",
+            max_tokens=100,
+            system="""Sos la recepcionista de una clínica de gastroenterología. 
+                    Respondé saludos, agradecimientos y despedidas de forma cordial, breve y natural.
+                    Sin emojis. Sin ofrecer ayuda adicional al final. Solo respondé el saludo.""",
+            messages=mensajes
+        )
+        estado["respuesta"] = answer.content[0].text
+        return estado
+
+    # ── FLUJO: AGENDAR TURNO ──────────────────────────────────────────────────
+    if categoria in ["agendar_turno", "agendar_turno_esperando_datos", "agendar_turno_confirmando"]:
         paso = estado.get("paso_flujo", "")
         datos_turno = leer_datos_turno(estado["telefono"])
 
@@ -95,7 +119,8 @@ def nodo_redactor(estado):
             hora = turno_info['hora']
 
             DIAS_ES = {0: "lunes", 1: "martes", 2: "miércoles", 3: "jueves", 4: "viernes", 5: "sábado", 6: "domingo"}
-            MESES_ES = {1: "enero", 2: "febrero", 3: "marzo", 4: "abril", 5: "mayo", 6: "junio", 7: "julio", 8: "agosto", 9: "septiembre", 10: "octubre", 11: "noviembre", 12: "diciembre"}
+            MESES_ES = {1: "enero", 2: "febrero", 3: "marzo", 4: "abril", 5: "mayo", 6: "junio",
+                        7: "julio", 8: "agosto", 9: "septiembre", 10: "octubre", 11: "noviembre", 12: "diciembre"}
 
             turno_display = f"{DIAS_ES[fecha.weekday()]} {fecha.day} de {MESES_ES[fecha.month]} de {fecha.year} a las {hora.strftime('%H:%M')} hs"
 
@@ -110,14 +135,11 @@ def nodo_redactor(estado):
             return estado
 
         elif paso == "esperando_datos":
-            mensajes = [{
-                "role": "user",
-                "content": f"""Extraé el nombre completo y DNI del siguiente mensaje.
-                Respondé ÚNICAMENTE con un JSON válido, sin texto adicional, sin markdown, sin explicaciones.
-                Formato exacto: {{"nombre": "valor", "dni": "valor"}}
-                Si no encontrás algún dato, poné cadena vacía.
-                Mensaje: {estado['mensaje']}"""
-            }]
+            mensajes = [{"role": "user", "content": f"""Extraé el nombre completo y DNI del siguiente mensaje.
+                        Respondé ÚNICAMENTE con un JSON válido, sin texto adicional, sin markdown, sin explicaciones.
+                        Formato exacto: {{"nombre": "valor", "dni": "valor"}}
+                        Si no encontrás algún dato, poné cadena vacía.
+                        Mensaje: {estado['mensaje']}"""}]
             answer = client.messages.create(
                 model="claude-haiku-4-5",
                 max_tokens=200,
@@ -125,8 +147,7 @@ def nodo_redactor(estado):
                 system="Respondé solo con JSON válido. Sin texto adicional. Sin markdown. Sin explicaciones."
             )
 
-            respuesta_raw = answer.content[0].text.strip()
-            respuesta_raw = respuesta_raw.replace("```json", "").replace("```", "").strip()
+            respuesta_raw = answer.content[0].text.strip().replace("```json", "").replace("```", "").strip()
             print(f"EXTRACCION RAW: {respuesta_raw}")
 
             import json as json_module
@@ -134,16 +155,22 @@ def nodo_redactor(estado):
                 datos = json_module.loads(respuesta_raw)
 
                 if not datos.get("nombre") or not datos.get("dni"):
-                    estado["respuesta"] = "Necesito tu nombre completo y DNI. Por favor enviálos juntos."
+                    estado["respuesta"] = "Necesito su nombre completo y DNI. Por favor envíelos juntos en un mensaje."
                     return estado
 
                 datos_turno.update(datos)
                 guardar_datos_turno(estado["telefono"], {**datos_turno, "paso": "confirmando"})
                 estado["paso_flujo"] = "confirmando"
-                estado["respuesta"] = f"Registramos los siguientes datos:\n- Nombre: {datos['nombre']}\n- DNI: {datos['dni']}\n- Turno: {datos_turno.get('turno', '')}\n\nRespondé SI para confirmar o NO para cancelar."
+                estado["respuesta"] = (
+                    f"Registramos los siguientes datos:\n"
+                    f"- Nombre: {datos['nombre']}\n"
+                    f"- DNI: {datos['dni']}\n"
+                    f"- Turno: {datos_turno.get('turno', '')}\n\n"
+                    f"Respondá SI para confirmar o NO para cancelar."
+                )
             except Exception as ex:
                 print(f"ERROR PARSEO JSON: {ex} | Raw: {respuesta_raw}")
-                estado["respuesta"] = "Necesito tu nombre completo y DNI. Por favor enviálos juntos en un solo mensaje."
+                estado["respuesta"] = "Necesito su nombre completo y DNI. Por favor envíelos juntos en un solo mensaje."
 
             return estado
 
@@ -157,42 +184,76 @@ def nodo_redactor(estado):
                         datos_turno.get("fecha", ""),
                         datos_turno.get("hora", "")
                     )
-                    guardar_datos_turno(estado["telefono"], {**datos_turno, "paso": "completado"})
-                    estado["paso_flujo"] = "completado"
+                    guardar_datos_turno(estado["telefono"], {})  # limpiar Redis
+                    estado["paso_flujo"] = ""
                     estado["respuesta"] = f"Turno confirmado. Su código de turno es: {codigo}. Guárdelo para futuras consultas o cancelaciones."
                 except Exception as e:
                     print(f"ERROR AGENDAR: {e}")
+                    guardar_datos_turno(estado["telefono"], {})
                     estado["respuesta"] = "Hubo un error al registrar el turno. Por favor comuníquese con la secretaría."
             else:
-                estado["respuesta"] = "Cancelamos el proceso. Si desea agendar un turno nuevamente, escríbanos."
                 guardar_datos_turno(estado["telefono"], {})
                 estado["paso_flujo"] = ""
+                estado["respuesta"] = "Cancelamos el proceso. Si desea agendar un turno nuevamente, escríbanos."
             return estado
 
-    mensajes = estado["historial"] + [{"role": "user", "content": f"Categoría: {estado['categoria']}\nMensaje del paciente: {estado['mensaje']}\nInformación disponible: {estado['informacion']}"}]
+    # ── FLUJO: CONSULTAR TURNO ────────────────────────────────────────────────
+    if categoria in ["consultar_turno", "consultar_turno_esperando_dni"]:
+        paso = estado.get("paso_flujo", "")
+
+        if paso != "consultar_turno_esperando_dni":
+            guardar_datos_turno(estado["telefono"], {"paso": "consultar_turno_esperando_dni"})
+            estado["respuesta"] = "Para consultar su turno, por favor indíqueme su número de DNI."
+            return estado
+        else:
+            dni = estado["mensaje"].strip()
+            turno = obtener_turno_paciente(dni)
+            guardar_datos_turno(estado["telefono"], {})
+            if turno:
+                t = turno[0]
+                estado["respuesta"] = f"Su turno está registrado para el {t[3]} a las {t[4]}.\nCódigo de turno: {t[1]}."
+            else:
+                estado["respuesta"] = "No encontramos un turno registrado con ese DNI. Si cree que es un error, comuníquese con la secretaría."
+            return estado
+
+    # ── FLUJO: CANCELAR TURNO ─────────────────────────────────────────────────
+    if categoria in ["cancelar_turno", "cancelar_turno_esperando_codigo"]:
+        paso = estado.get("paso_flujo", "")
+
+        if paso != "cancelar_turno_esperando_codigo":
+            guardar_datos_turno(estado["telefono"], {"paso": "cancelar_turno_esperando_codigo"})
+            estado["respuesta"] = "Para cancelar su turno necesito el código de turno (formato TUR-XXXX). Si no lo tiene, comuníquese con la secretaría."
+            return estado
+        else:
+            codigo = estado["mensaje"].strip().upper()
+            try:
+                cancelar_turno(codigo)
+                guardar_datos_turno(estado["telefono"], {})
+                estado["respuesta"] = f"Su turno con código {codigo} fue cancelado correctamente."
+            except Exception as e:
+                print(f"ERROR CANCELAR: {e}")
+                guardar_datos_turno(estado["telefono"], {})
+                estado["respuesta"] = "No pudimos cancelar el turno. Verifique el código o comuníquese con la secretaría."
+            return estado
+
+    # ── RESTO: PREGUNTAS FRECUENTES Y DERIVAR SECRETARIO ─────────────────────
+    mensajes = estado["historial"] + [{
+        "role": "user",
+        "content": f"Categoría: {estado['categoria']}\nMensaje del paciente: {estado['mensaje']}\nInformación disponible: {estado['informacion']}"
+    }]
 
     answer = client.messages.create(
         model="claude-haiku-4-5",
         max_tokens=1024,
-        system="""
-                Sos un asistente de atención al paciente de una clínica de gastroenterología.
-                Tu tarea es redactar respuestas claras, empáticas y profesionales.
-
-                Reglas generales:
-                - Respondé siempre en el mismo idioma que el paciente (español, inglés o portugués)
-                - Sé conciso y directo, sin frases de relleno
+        system="""Sos el asistente de una clínica de gastroenterología.
+                Respondé de forma clara, empática y profesional.
                 - Sin emojis
-                - Sin "te tengo buenas noticias" ni frases similares
+                - Sin frases de relleno
                 - Nunca des consejos médicos
-                - Nunca inventes información que no esté en los datos provistos
-                - Sin preguntas de seguimiento al final
+                - Nunca inventes información
 
-                Instrucciones por categoría:
-                consultar_turno: mostrá los datos del turno. Si no tiene, ofrecé agendar uno.
-                cancelar_turno: mostrá el turno actual y pedí el código de turno para cancelar. Si no tiene código, derivalo al secretario.
-                pregunta_frecuente: respondé usando la información disponible.
-                derivar_secretario: informá que será atendido por una persona en breve.
-             """,
+                Para pregunta_frecuente: respondé usando la información disponible.
+                Para derivar_secretario: informá cordialmente que será atendido por una persona en breve.""",
         messages=mensajes
     )
 
@@ -204,43 +265,28 @@ def nodo_secretario(estado):
     enviar_alerta_secretario(f"Paciente requiere atención: {estado['telefono']} - Consulta: {estado['mensaje']}")
     return estado
 
+
 def nodo_revisor(estado):
-    
-    # Shortcircuit para categorías que no necesitan revisión de Claude
-    if estado["categoria"].strip() in [
-        "spam",
-        "fuera_de_alcance", 
-        "agendar_turno",
-        "agendar_turno_esperando_datos",
-        "agendar_turno_confirmando"
-    ]:
+    categoria = estado["categoria"].strip()
+
+    # Shortcircuit — estas categorías no necesitan revisión de Claude
+    if categoria in CATEGORIAS_CON_FLUJO + ["saludo", "consultar_turno", "consultar_turno_esperando_dni",
+                                              "cancelar_turno", "cancelar_turno_esperando_codigo"]:
         estado["respuesta_final"] = estado["respuesta"]
         save_history(estado["telefono"], estado["historial"])
         return estado
-    
-    mensajes = [{"role": "user", "content": f"Mensaje original del cliente: {estado['mensaje']}\nRespuesta a revisar: {estado['respuesta']}"}]
+
+    mensajes = [{"role": "user", "content": f"Mensaje del paciente: {estado['mensaje']}\nRespuesta a revisar: {estado['respuesta']}"}]
 
     answer = client.messages.create(
         model="claude-haiku-4-5",
         max_tokens=1024,
-        system="""
-                Sos un revisor de respuestas de una clínica de gastroenterología.
-                Recibís una respuesta redactada y tenés que devolver la versión final lista para enviar al paciente.
-
-                IMPORTANTE: Respondé ÚNICAMENTE con el texto que recibirá el paciente.
-                - Sin análisis
-                - Sin comentarios internos
-                - Sin numeración de problemas
-                - Sin "versión corregida:" ni ningún encabezado
-                - Sin asteriscos de formato markdown
-                - Solo el mensaje final tal como lo leerá el paciente por WhatsApp
-
-                Si la respuesta está bien, copiala tal cual.
-                Si necesita mejoras, corregila y devolvé solo el texto mejorado.
-             """,
+        system="""Sos un revisor de respuestas de una clínica de gastroenterología.
+                Devolvé ÚNICAMENTE el texto final que recibirá el paciente.
+                Sin análisis, sin encabezados, sin asteriscos, sin comentarios.
+                Si la respuesta está bien, copiala tal cual. Si necesita mejoras, corregila.""",
         messages=mensajes
     )
     estado["respuesta_final"] = answer.content[0].text
     save_history(estado["telefono"], estado["historial"])
     return estado
-    
