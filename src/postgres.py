@@ -36,14 +36,6 @@ def obtener_conexion():
         pgPool.putconn(conn)
 
 
-def obtener_turnos_disponibles(fecha):
-    with obtener_conexion() as conn:
-        with conn.cursor() as cur:
-            cur.execute("SELECT * FROM turnos WHERE estado = 'disponible' AND fecha = %s ORDER BY hora", (fecha,))
-            resultados = cur.fetchall()
-        conn.commit()
-        return resultados
-
 class TurnoNoDisponibleError(Exception):
     """Se lanza cuando dos pacientes intentan agendar el mismo dia+hora
     (otro paciente confirmó ese horario mientras este todavía lo tenía
@@ -57,7 +49,8 @@ def agendar_turno(telefono, nombre, dni, fecha, hora):
         try:
             with conn.cursor() as cur:
                 cur.execute(
-                    "INSERT INTO pacientes(telefono, nombre, dni) VALUES (%s,%s,%s) ON CONFLICT (dni) DO NOTHING",
+                    """INSERT INTO pacientes(telefono, nombre, dni) VALUES (%s,%s,%s)
+                       ON CONFLICT (dni) DO UPDATE SET nombre = EXCLUDED.nombre, telefono = EXCLUDED.telefono""",
                     (telefono, nombre, dni)
                 )
                 cur.execute(
@@ -73,7 +66,10 @@ def agendar_turno(telefono, nombre, dni, fecha, hora):
 def obtener_turno_paciente(dni_paciente):
     with obtener_conexion() as conn:
         with conn.cursor() as cur:
-            cur.execute("SELECT * FROM turnos WHERE estado = 'agendado' AND dni_paciente = %s", (dni_paciente,))
+            cur.execute(
+                "SELECT * FROM turnos WHERE estado = 'agendado' AND dni_paciente = %s ORDER BY fecha, hora",
+                (dni_paciente,)
+            )
             resultados = cur.fetchall()
         conn.commit()
         return resultados

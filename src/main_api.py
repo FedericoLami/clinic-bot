@@ -41,6 +41,7 @@ app.add_middleware(
 
 @app.post("/webhook")
 async def webhook(request:Request):
+    telefono = None
     try:
         datos = await request.form()
 
@@ -75,4 +76,9 @@ async def webhook(request:Request):
         print(f"ERROR: {e}")
         import traceback
         traceback.print_exc()
+        if telefono:
+            try:
+                enviar_mensaje(telefono, "Hubo un error inesperado al procesar su mensaje. Por favor intente nuevamente en unos minutos o comuníquese con la secretaría.")
+            except Exception as e2:
+                print(f"ERROR AL ENVIAR MENSAJE DE FALLBACK: {e2}")
         raise HTTPException(status_code=500, detail=str(e))

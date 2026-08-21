@@ -2,7 +2,7 @@ import anthropic
 from dotenv import load_dotenv
 import os
 import re
-from src.postgres import obtener_proximo_turno_disponible, obtener_turnos_disponibles, agendar_turno, obtener_turno_paciente, cancelar_turno, obtener_preguntas_frecuentes, TurnoNoDisponibleError
+from src.postgres import obtener_proximo_turno_disponible, agendar_turno, obtener_turno_paciente, cancelar_turno, obtener_preguntas_frecuentes, TurnoNoDisponibleError
 from src.sesion import save_history, read_history, guardar_datos_turno, leer_datos_turno
 from src.twilio_client import enviar_alerta_secretario
 
@@ -16,6 +16,14 @@ CATEGORIAS_CON_FLUJO = [
     "cancelar_turno", "cancelar_turno_esperando_codigo",
     "spam", "fuera_de_alcance"
 ]
+
+# Categorías que ya traen su respuesta final armada y no necesitan pasar
+# por el revisor de Claude en nodo_revisor.
+CATEGORIAS_SIN_REVISION = CATEGORIAS_CON_FLUJO + ["saludo"]
+
+DIAS_ES = {0: "lunes", 1: "martes", 2: "miércoles", 3: "jueves", 4: "viernes", 5: "sábado", 6: "domingo"}
+MESES_ES = {1: "enero", 2: "febrero", 3: "marzo", 4: "abril", 5: "mayo", 6: "junio",
+            7: "julio", 8: "agosto", 9: "septiembre", 10: "octubre", 11: "noviembre", 12: "diciembre"}
 
 # Palabras/frases que indican que el paciente quiere abandonar el flujo activo
 PALABRAS_ESCAPE_FLUJO = [
@@ -87,7 +95,7 @@ def nodo_clasificador(estado):
 
 
 def nodo_buscador(estado):
-    categoria = estado["categoria"]
+    categoria = estado["categoria"].strip()
     if categoria == "agendar_turno":
         estado["informacion"] = str(obtener_proximo_turno_disponible())
     elif categoria == "pregunta_frecuente":
@@ -133,10 +141,6 @@ def nodo_redactor(estado):
             turno_info = obtener_proximo_turno_disponible()
             fecha = turno_info['fecha']
             hora = turno_info['hora']
-
-            DIAS_ES = {0: "lunes", 1: "martes", 2: "miércoles", 3: "jueves", 4: "viernes", 5: "sábado", 6: "domingo"}
-            MESES_ES = {1: "enero", 2: "febrero", 3: "marzo", 4: "abril", 5: "mayo", 6: "junio",
-                        7: "julio", 8: "agosto", 9: "septiembre", 10: "octubre", 11: "noviembre", 12: "diciembre"}
 
             turno_display = f"{DIAS_ES[fecha.weekday()]} {fecha.day} de {MESES_ES[fecha.month]} de {fecha.year} a las {hora.strftime('%H:%M')} hs"
 
@@ -301,8 +305,7 @@ def nodo_revisor(estado):
     categoria = estado["categoria"].strip()
 
     # Shortcircuit — estas categorías no necesitan revisión de Claude
-    if categoria in CATEGORIAS_CON_FLUJO + ["saludo", "consultar_turno", "consultar_turno_esperando_dni",
-                                              "cancelar_turno", "cancelar_turno_esperando_codigo"]:
+    if categoria in CATEGORIAS_SIN_REVISION:
         estado["respuesta_final"] = estado["respuesta"]
         estado["historial"].append({"role": "assistant", "content": estado["respuesta_final"]})
         save_history(estado["telefono"], estado["historial"])
