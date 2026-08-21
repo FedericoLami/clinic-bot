@@ -1,4 +1,5 @@
 import psycopg2
+import psycopg2.errors
 from psycopg2 import pool
 import os
 import random
@@ -43,19 +44,30 @@ def obtener_turnos_disponibles(fecha):
         conn.commit()
         return resultados
 
+class TurnoNoDisponibleError(Exception):
+    """Se lanza cuando dos pacientes intentan agendar el mismo dia+hora
+    (otro paciente confirmó ese horario mientras este todavía lo tenía
+    seleccionado)."""
+    pass
+
+
 def agendar_turno(telefono, nombre, dni, fecha, hora):
     codigo = "TUR-" + "".join(random.choices(string.ascii_uppercase + string.digits, k=4))
     with obtener_conexion() as conn:
-        with conn.cursor() as cur:
-            cur.execute(
-                "INSERT INTO pacientes(telefono, nombre, dni) VALUES (%s,%s,%s) ON CONFLICT (dni) DO NOTHING",
-                (telefono, nombre, dni)
-            )
-            cur.execute(
-                "INSERT INTO turnos(codigo_turno, dni_paciente, fecha, hora, estado) VALUES (%s,%s,%s,%s,%s)",
-                (codigo, dni, fecha, hora, "agendado")
-            )
-        conn.commit()
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "INSERT INTO pacientes(telefono, nombre, dni) VALUES (%s,%s,%s) ON CONFLICT (dni) DO NOTHING",
+                    (telefono, nombre, dni)
+                )
+                cur.execute(
+                    "INSERT INTO turnos(codigo_turno, dni_paciente, fecha, hora, estado) VALUES (%s,%s,%s,%s,%s)",
+                    (codigo, dni, fecha, hora, "agendado")
+                )
+            conn.commit()
+        except psycopg2.errors.UniqueViolation:
+            conn.rollback()
+            raise TurnoNoDisponibleError(f"El turno {fecha} {hora} ya fue reservado por otro paciente.")
     return codigo
 
 def obtener_turno_paciente(dni_paciente):

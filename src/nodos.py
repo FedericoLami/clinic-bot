@@ -2,7 +2,7 @@ import anthropic
 from dotenv import load_dotenv
 import os
 import re
-from src.postgres import obtener_proximo_turno_disponible, obtener_turnos_disponibles, agendar_turno, obtener_turno_paciente, cancelar_turno, obtener_preguntas_frecuentes
+from src.postgres import obtener_proximo_turno_disponible, obtener_turnos_disponibles, agendar_turno, obtener_turno_paciente, cancelar_turno, obtener_preguntas_frecuentes, TurnoNoDisponibleError
 from src.sesion import save_history, read_history, guardar_datos_turno, leer_datos_turno
 from src.twilio_client import enviar_alerta_secretario
 
@@ -207,6 +207,11 @@ def nodo_redactor(estado):
                     guardar_datos_turno(estado["telefono"], {})  # limpiar Redis
                     estado["paso_flujo"] = ""
                     estado["respuesta"] = f"Turno confirmado. Su código de turno es: {codigo}. Guárdelo para futuras consultas o cancelaciones."
+                except TurnoNoDisponibleError as e:
+                    print(f"TURNO YA TOMADO: {e}")
+                    guardar_datos_turno(estado["telefono"], {})
+                    estado["paso_flujo"] = ""
+                    estado["respuesta"] = "Ese horario ya fue reservado por otro paciente mientras tanto. Por favor, escríbanos de nuevo para pedir el próximo turno disponible."
                 except Exception as e:
                     print(f"ERROR AGENDAR: {e}")
                     guardar_datos_turno(estado["telefono"], {})

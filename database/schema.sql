@@ -16,6 +16,11 @@ CREATE TABLE turnos(
     recordatorio_enviado BOOLEAN DEFAULT false
 );
 
+-- Evita que dos turnos queden agendados en el mismo dia+hora (race condition
+-- entre el momento en que se ofrece un horario libre y el momento en que se
+-- confirma la reserva).
+CREATE UNIQUE INDEX turnos_slot_agendado_idx ON turnos(fecha, hora) WHERE estado = 'agendado';
+
 CREATE TABLE preguntas_frecuentes(
     idPregunta SERIAL PRIMARY KEY,
     categoria VARCHAR(50),
