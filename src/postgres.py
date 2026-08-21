@@ -44,8 +44,13 @@ def obtener_turno_paciente(dni_paciente):
     return resultados
 
 def cancelar_turno(codigo_turno):
-    pgCursor.execute("UPDATE turnos SET estado = 'cancelado' WHERE codigo_turno = %s ",(codigo_turno,))
+    pgCursor.execute(
+        "UPDATE turnos SET estado = 'cancelado' WHERE codigo_turno = %s AND estado = 'agendado'",
+        (codigo_turno,)
+    )
+    filas_afectadas = pgCursor.rowcount
     pgConnection.commit()
+    return filas_afectadas > 0
 
 def obtener_preguntas_frecuentes():
     pgCursor.execute("SELECT * FROM preguntas_frecuentes")

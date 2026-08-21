@@ -227,9 +227,12 @@ def nodo_redactor(estado):
         else:
             codigo = estado["mensaje"].strip().upper()
             try:
-                cancelar_turno(codigo)
+                cancelado = cancelar_turno(codigo)
                 guardar_datos_turno(estado["telefono"], {})
-                estado["respuesta"] = f"Su turno con código {codigo} fue cancelado correctamente."
+                if cancelado:
+                    estado["respuesta"] = f"Su turno con código {codigo} fue cancelado correctamente."
+                else:
+                    estado["respuesta"] = f"No encontramos un turno activo con el código {codigo}. Verifique el código o comuníquese con la secretaría."
             except Exception as e:
                 print(f"ERROR CANCELAR: {e}")
                 guardar_datos_turno(estado["telefono"], {})
