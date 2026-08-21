@@ -96,7 +96,7 @@ def nodo_redactor(estado):
 
     # ── SALUDO / AGRADECIMIENTO ───────────────────────────────────────────────
     if categoria == "saludo":
-        mensajes = [{"role": "user", "content": estado["mensaje"]}]
+        mensajes = estado["historial"]
         answer = client.messages.create(
             model="claude-haiku-4-5",
             max_tokens=100,
@@ -276,6 +276,7 @@ def nodo_revisor(estado):
     if categoria in CATEGORIAS_CON_FLUJO + ["saludo", "consultar_turno", "consultar_turno_esperando_dni",
                                               "cancelar_turno", "cancelar_turno_esperando_codigo"]:
         estado["respuesta_final"] = estado["respuesta"]
+        estado["historial"].append({"role": "assistant", "content": estado["respuesta_final"]})
         save_history(estado["telefono"], estado["historial"])
         return estado
 
@@ -291,5 +292,6 @@ def nodo_revisor(estado):
         messages=mensajes
     )
     estado["respuesta_final"] = answer.content[0].text
+    estado["historial"].append({"role": "assistant", "content": estado["respuesta_final"]})
     save_history(estado["telefono"], estado["historial"])
     return estado
