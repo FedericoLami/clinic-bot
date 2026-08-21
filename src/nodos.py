@@ -16,6 +16,13 @@ CATEGORIAS_CON_FLUJO = [
     "spam", "fuera_de_alcance"
 ]
 
+# Palabras/frases que indican que el paciente quiere abandonar el flujo activo
+PALABRAS_ESCAPE_FLUJO = [
+    "cancelar", "cancelalo", "cancelá", "olvidalo", "olvidá", "olvidate",
+    "dejalo", "dejalo así", "salir", "otra cosa", "no quiero seguir",
+    "no importa", "mejor no"
+]
+
 def nodo_clasificador(estado):
     estado["historial"] = read_history(estado["telefono"])
     estado["historial"].append({"role": "user", "content": estado["mensaje"]})
@@ -23,6 +30,14 @@ def nodo_clasificador(estado):
     # Leer flujo activo de Redis
     datos_turno = leer_datos_turno(estado["telefono"])
     paso = datos_turno.get("paso", "")
+
+    # Escape hatch: si hay un flujo activo pero el paciente pide explícitamente
+    # abandonarlo, limpiamos el estado y clasificamos el mensaje normalmente
+    # en vez de forzar la categoría del paso.
+    mensaje_lower = estado["mensaje"].lower()
+    if paso and any(palabra in mensaje_lower for palabra in PALABRAS_ESCAPE_FLUJO):
+        guardar_datos_turno(estado["telefono"], {})
+        paso = ""
 
     if paso in ["esperando_datos", "confirmando"]:
         estado["categoria"] = f"agendar_turno_{paso}"
