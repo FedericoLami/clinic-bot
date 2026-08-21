@@ -85,6 +85,16 @@ def nodo_clasificador(estado):
                 - En caso de duda entre categorías: preferir derivar_secretario
                 - Aceptás mensajes en español, inglés y portugués
 
+                Distinción clave entre PREGUNTA y ACCIÓN (muy importante):
+                Un mensaje que pregunta sobre cómo funciona algo, o plantea un escenario
+                hipotético, NO es lo mismo que pedir esa acción ahora mismo.
+                - "quiero cancelar mi turno" / "cancelame el turno" / "necesito anular el turno que tengo" → cancelar_turno (acción)
+                - "¿qué pasa si quiero cancelar?" / "¿puedo cancelar un turno?" / "¿cómo cancelo un turno?" / "¿con cuánto tiempo hay que cancelar?" → pregunta_frecuente (pregunta)
+                - "quiero sacar un turno" / "necesito un turno para el viernes" → agendar_turno (acción)
+                - "¿cómo saco un turno?" / "¿qué necesito para sacar un turno?" → pregunta_frecuente (pregunta)
+                - "¿tengo un turno?" / "quiero ver mi turno" → consultar_turno (acción/consulta concreta sobre SU turno)
+                - "¿cómo hago para consultar mi turno?" (sin pedir el dato todavía) → pregunta_frecuente (pregunta)
+
                 Respondé únicamente con la palabra de la categoría. Sin explicaciones, sin JSON, sin puntuación.
              """,
         messages=mensajes
