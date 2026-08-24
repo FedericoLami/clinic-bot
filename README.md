@@ -18,6 +18,12 @@ El bot **es** el sistema de gestión: no se integra con ningún sistema externo,
 
 ---
 
+## Demo
+
+![Demo del sistema](demo.gif)
+
+---
+
 ## Stack tecnológico
 
 | Capa | Tecnología |
@@ -224,6 +230,38 @@ INTERVALO_MINUTOS = 30
 - El DNI es el identificador primario del paciente — permite que una persona saque turnos para distintos familiares desde el mismo celular
 - El historial de conversación expira automáticamente a los 30 minutos de inactividad
 - Cumplimiento Ley 25.326 (Argentina)
+
+---
+
+## Decisiones de diseño
+
+**DNI como identificador primario del paciente, no el teléfono**
+El teléfono de WhatsApp identifica la conversación, pero no al paciente. Una misma persona puede sacar turnos para distintos familiares desde el mismo celular — si el identificador fuera el teléfono, sería imposible distinguir entre "turno de Juan" y "turno de la madre de Juan" en la misma conversación. El DNI resuelve esto de raíz.
+
+**Cálculo dinámico de slots disponibles en lugar de tabla pre-cargada**
+Una tabla de slots requeriría cargar miles de filas por anticipado y mantenerlas sincronizadas. El sistema calcula los slots libres en tiempo de ejecución: dado el horario de la doctora (días y horas fijas en constantes de código), un slot está disponible si no aparece en `turnos` con estado `'agendado'`. Cambiar la disponibilidad implica modificar dos constantes, no una tabla.
+
+**Estado de flujo conversacional en Redis, no en variables de memoria**
+FastAPI atiende múltiples requests concurrentes — cada mensaje de WhatsApp llega como un request independiente sin estado compartido en memoria. Redis permite que el clasificador sepa en qué paso del flujo está el paciente (esperando_datos, confirmando, etc.) entre mensajes, sin importar qué instancia del servidor atiende cada request.
+
+**El clasificador lee Redis antes de llamar a Claude**
+Si hay un flujo activo (por ejemplo, el bot ya preguntó el DNI y está esperando la respuesta), llamar a Claude para clasificar el siguiente mensaje es un gasto innecesario de tokens y latencia — y produce clasificaciones incorrectas porque "31234567" (un DNI) se clasifica como spam. El clasificador lee el paso activo de Redis primero y lo asigna directamente como categoría sin invocar el LLM.
+
+---
+
+## Desafíos técnicos resueltos
+
+**Race condition en reserva de turnos**
+Dos pacientes podían quedar con el mismo horario si sus requests llegaban casi al mismo tiempo: el primero calculaba el slot libre, el segundo también lo veía libre antes de que el primero insertara en la base. La solución fue un índice parcial único en PostgreSQL: `CREATE UNIQUE INDEX ON turnos(fecha, hora) WHERE estado = 'agendado'`. Cualquier intento de doble reserva falla a nivel de base de datos antes de llegar al código.
+
+**Falsa confirmación al cancelar turnos**
+`UPDATE ... WHERE codigo_turno = X` no lanza excepción si el código no existe — simplemente afecta 0 filas. El sistema respondía "turno cancelado correctamente" aunque el código fuera inválido. La solución fue validar `pgCursor.rowcount` después del UPDATE y responder distinto si es 0.
+
+**Historial de conversación sin respuestas del bot**
+El historial persistido en Redis solo contenía mensajes del paciente (`role: user`), nunca las respuestas del bot (`role: assistant`). Esto hacía que el contexto de conversaciones previas fuera inútil para el LLM — veía una lista de mensajes del usuario sin saber qué había respondido antes. El fix fue agregar la respuesta final al historial en `nodo_revisor` antes de persistir en Redis.
+
+**Scheduler iniciado dos veces al arrancar**
+APScheduler se iniciaba una vez al importar `recordatorios.py` y una segunda vez en el `lifespan` de FastAPI, lanzando `SchedulerAlreadyRunningError`. La solución fue remover el `.start()` del módulo de recordatorios y dejarlo exclusivamente en el `lifespan`.
 
 ---
 
